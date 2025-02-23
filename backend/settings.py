@@ -66,14 +66,17 @@ INSTALLED_APPS = [
 ASGI_APPLICATION = 'backend.asgi.application'
 
 # settings.py
+import os
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379)],  # Ensure this matches your Redis server
+            "hosts": [f"rediss://:{os.getenv('REDIS_TOKEN')}@{os.getenv('REDIS_URL')}"],
         },
     },
 }
+
 
 AUTH_USER_MODEL = 'authapp.CustomUser'  # Replace 'authapp' with your app name
 CORS_ALLOW_ALL_ORIGINS = True
