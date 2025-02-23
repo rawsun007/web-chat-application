@@ -88,9 +88,11 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Allow requests from your React frontend
+    "https://web-chat-application-a0f4.onrender.com",  # Your Render backend
+    "http://localhost:3000",  # Local React frontend
     "http://localhost:5173",
 ]
+
 
 ROOT_URLCONF = 'backend.urls'
 
