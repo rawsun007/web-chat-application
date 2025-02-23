@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 import dj_database_url
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv()        
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -52,8 +53,22 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'authapp',  
     'corsheaders',
+    'channels',
+
 
 ]
+
+ASGI_APPLICATION = 'backend.asgi.application'
+
+# settings.py
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [("127.0.0.1", 6379)],  # Ensure this matches your Redis server
+        },
+    },
+}
 
 AUTH_USER_MODEL = 'authapp.CustomUser'  # Replace 'authapp' with your app name
 CORS_ALLOW_ALL_ORIGINS = True
@@ -74,6 +89,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Allow requests from your React frontend
+    "http://localhost:5173",
 ]
 
 ROOT_URLCONF = 'backend.urls'
@@ -99,8 +115,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+
     ],
 }
+
 
 
 # Database
