@@ -10,6 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
+import logging
+
+# Suppress 404 warnings for missing endpoints
+logging.getLogger("django.request").setLevel(logging.ERROR)
+
 from pathlib import Path
 import os
 from dotenv import load_dotenv
