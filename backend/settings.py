@@ -35,7 +35,7 @@ DEBUG = True
 # settings.py
 
 ALLOWED_HOSTS = [
-    'sutex-backend.onrender.com',  # Your Render domain
+    'https://web-chat-application-a0f4.onrender.com',  # Your Render domain
     'localhost',                   # For local development
     '127.0.0.1',                   # For local development
 ]
