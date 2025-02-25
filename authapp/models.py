@@ -22,6 +22,8 @@ class CustomUser(AbstractUser):
         related_name="customuser_set",  # Unique related_name
         related_query_name="user",
     )
+    is_online = models.BooleanField(default=False)
+    last_online = models.DateTimeField(null=True, blank=True)
 
 
 # models.py
