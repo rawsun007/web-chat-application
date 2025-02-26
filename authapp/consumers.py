@@ -12,7 +12,6 @@ User = get_user_model()
 class PrivateChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
-            # Extract token from query parameters
             query_params = self.scope["query_string"].decode().split("&")
             token = None
             for param in query_params:
@@ -25,7 +24,6 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
 
-            # Authenticate user using token
             self.user = await self.get_user_from_token(token)
             if not self.user:
                 print("Invalid token or user not found")
@@ -34,16 +32,13 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
 
             print(f"User authenticated: {self.user.username}")
 
-            # Set up chat room
             self.other_user_id = int(self.scope["url_route"]["kwargs"]["other_user_id"])
             user_ids = sorted([self.user.id, self.other_user_id])
             self.room_name = f"chat_{user_ids[0]}_{user_ids[1]}"
 
-            # Join room group
             await self.channel_layer.group_add(self.room_name, self.channel_name)
             await self.accept()
 
-            # Update user presence
             status_changed = await self.update_presence(True)
             if status_changed:
                 await self.broadcast_status()
@@ -81,7 +76,7 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_send(
                 self.room_name,
                 {
-                    "type": "chat_message",  # Changed from "chat.message"
+                    "type": "chat_message",
                     "message": saved_message.message,
                     "sender_id": str(self.user.id),
                     "sender_username": self.user.username,
@@ -92,7 +87,7 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             await self.send_error(str(e))
 
-    async def chat_message(self, event):  # Method name matches the "type" field above
+    async def chat_message(self, event):
         await self.send(text_data=json.dumps(event))
 
     async def typing_indicator(self, event):
@@ -111,7 +106,6 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
                 "is_typing": data.get("is_typing", False)
             }
         )
-
         await self.channel_layer.group_send(
             f"chatlist_{self.other_user_id}",
             {
@@ -194,6 +188,7 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             "message": error_msg
         }))
 
+
 class ChatListConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
@@ -237,6 +232,7 @@ class ChatListConsumer(AsyncWebsocketConsumer):
             "is_typing": event["is_typing"]
         }))
 
+
 class OnlineStatusConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
@@ -271,7 +267,3 @@ class OnlineStatusConsumer(AsyncWebsocketConsumer):
             "status": event["status"],
             "last_online": event.get("last_online")
         }))
-
-
-
-
