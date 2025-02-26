@@ -1,5 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from channels.db import database_sync_to_async
+from datetime import datetime
+
 
 class CustomUser(AbstractUser):
     # Add any additional fields here if needed
@@ -24,6 +27,26 @@ class CustomUser(AbstractUser):
     )
     is_online = models.BooleanField(default=False)
     last_online = models.DateTimeField(null=True, blank=True)
+    active_connections = models.IntegerField(default=0)
+
+
+
+# OnlineStatusConsumer - Connection tracking
+@database_sync_to_async 
+def user_connect(self):
+    self.user.active_connections += 1
+    self.user.is_online = True
+    self.user.last_online = None
+    self.user.save()
+
+@database_sync_to_async
+def user_disconnect(self):
+    self.user.active_connections = max(0, self.user.active_connections - 1)
+    if self.user.active_connections == 0:
+        self.user.is_online = False
+        self.user.last_online = datetime.now()
+    self.user.save()
+
 
 
 # models.py
