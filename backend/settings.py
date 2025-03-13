@@ -68,6 +68,8 @@ ASGI_APPLICATION = 'backend.asgi.application'
 # settings.py
 import os
 
+import os
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",

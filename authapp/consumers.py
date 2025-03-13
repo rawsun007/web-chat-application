@@ -194,28 +194,43 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             "message": error_msg
         }))
 
+import json
+from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.db import database_sync_to_async
+from rest_framework.authtoken.models import Token
+
 class ChatListConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
+            # Parse query string and extract token
+            query_str = self.scope["query_string"].decode()
+            print("Query string:", query_str)
             query_params = {
                 key: value for key, value in (
                     param.split("=", 1) if "=" in param else (param, "")
-                    for param in self.scope["query_string"].decode().split("&")
+                    for param in query_str.split("&")
                 )
             }
             token = query_params.get("token")
+            print("Received token:", token)
             if not token:
+                print("No token provided")
                 await self.close()
                 return
 
-            token_obj = await database_sync_to_async(Token.objects.get)(key=token)
-            self.user = token_obj.user
-            self.room_group_name = f"chatlist_{self.user.id}"
+            # Use helper method to get user from token
+            self.user = await self.get_user_from_token(token)
+            if not self.user:
+                print("Invalid token or user not found")
+                await self.close(code=4001)
+                return
 
+            self.room_group_name = f"chatlist_{self.user.id}"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.accept()
-
+            print(f"ChatListConsumer: User {self.user.username} connected successfully")
         except Exception as e:
+            print("ChatListConsumer connect exception:", str(e))
             await self.close(code=4001)
 
     async def disconnect(self, close_code):
@@ -236,6 +251,20 @@ class ChatListConsumer(AsyncWebsocketConsumer):
             "user_id": event["user_id"],
             "is_typing": event["is_typing"]
         }))
+
+    @database_sync_to_async
+    def get_user_from_token(self, token):
+        try:
+            token_obj = Token.objects.get(key=token)
+            # Access the user here so that lazy evaluation happens in a sync context.
+            return token_obj.user
+        except Token.DoesNotExist:
+            return None
+
+
+
+
+
 
 class OnlineStatusConsumer(AsyncWebsocketConsumer):
     async def connect(self):
