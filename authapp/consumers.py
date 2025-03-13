@@ -260,6 +260,7 @@ class ChatListConsumer(AsyncWebsocketConsumer):
 
 
 
+
 class OnlineStatusConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
