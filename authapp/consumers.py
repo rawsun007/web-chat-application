@@ -1,3 +1,5 @@
+# consumers.py
+
 import json
 from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -13,24 +15,16 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
             query_params = self.scope["query_string"].decode().split("&")
-            token = None
-            for param in query_params:
-                if param.startswith("token="):
-                    token = param.split("=")[1]
-                    break
-
+            token = next((param.split("=")[1] for param in query_params if param.startswith("token=")), None)
+            
             if not token:
-                print("No token provided")
                 await self.close()
                 return
 
             self.user = await self.get_user_from_token(token)
             if not self.user:
-                print("Invalid token or user not found")
                 await self.close()
                 return
-
-            print(f"User authenticated: {self.user.username}")
 
             self.other_user_id = int(self.scope["url_route"]["kwargs"]["other_user_id"])
             user_ids = sorted([self.user.id, self.other_user_id])
@@ -39,140 +33,126 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_add(self.room_name, self.channel_name)
             await self.accept()
 
-            status_changed = await self.update_presence(True)
+            # Update user presence
+            status_changed = await self.user_connect()
             if status_changed:
                 await self.broadcast_status()
-
         except Exception as e:
-            print(f"Connection error: {str(e)}")
+            print(f"Connection error: {e}")
             await self.close()
 
     async def disconnect(self, close_code):
-        try:
-            if hasattr(self, 'room_name') and self.room_name:
-                await self.channel_layer.group_discard(self.room_name, self.channel_name)
-            if hasattr(self, 'user'):
-                status_changed = await self.update_presence(False)
-                if status_changed:
-                    await self.broadcast_status()
-        except Exception as e:
-            print(f"Disconnect error: {str(e)}")
+        if hasattr(self, 'room_name'):
+            await self.channel_layer.group_discard(self.room_name, self.channel_name)
+        if hasattr(self, 'user'):
+            status_changed = await self.user_disconnect()
+            if status_changed:
+                await self.broadcast_status()
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
+        data = json.loads(text_data)
+        if data.get('type') == 'typing':
+            await self.handle_typing_event(data)
+            return
 
-            if data.get('type') == 'typing':
-                await self.handle_typing_event(data)
-                return
+        message = data.get("message", "").strip()
+        if not message:
+            return
 
-            message = data.get("message", "").strip()
-            if not message:
-                return
+        chat_obj = await self.get_or_create_chat()
+        saved_message = await self.save_message(chat_obj, message)
 
-            chat_obj = await self.get_or_create_chat()
-            saved_message = await self.save_message(chat_obj, message)
-
-            await self.channel_layer.group_send(
-                self.room_name,
-                {
-                    "type": "chat_message",
-                    "message": saved_message.message,
-                    "sender_id": str(self.user.id),
-                    "sender_username": self.user.username,
-                    "timestamp": saved_message.timestamp.isoformat(),
-                },
-            )
-
-        except Exception as e:
-            await self.send_error(str(e))
+        await self.channel_layer.group_send(
+            self.room_name,
+            {
+                "type": "chat_message",
+                "message": saved_message.message,
+                "sender_id": str(self.user.id),
+                "sender_username": self.user.username,
+                "timestamp": saved_message.timestamp.isoformat(),
+            },
+        )
 
     async def chat_message(self, event):
         await self.send(text_data=json.dumps(event))
 
     async def typing_indicator(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "typing",
-            "user_id": event["user_id"],
-            "is_typing": event["is_typing"]
-        }))
+        # Enhanced typing indicator handling
+        try:
+            await self.send(text_data=json.dumps({
+                "type": "typing",
+                "user_id": event["user_id"],
+                "is_typing": event["is_typing"],
+                "timestamp": datetime.now().isoformat()  # Add timestamp for better sync
+            }))
+        except Exception as e:
+            print(f"Error sending typing indicator: {e}")
 
     async def handle_typing_event(self, data):
-        await self.channel_layer.group_send(
-            self.room_name,
-            {
-                "type": "typing.indicator",
-                "user_id": str(self.user.id),
-                "is_typing": data.get("is_typing", False)
-            }
-        )
-        await self.channel_layer.group_send(
-            f"chatlist_{self.other_user_id}",
-            {
-                "type": "friend.typing",
-                "user_id": self.user.id,
-                "is_typing": data.get("is_typing", False)
-            }
-        )
+        # Improved typing event processing
+        try:
+            await self.channel_layer.group_send(
+                self.room_name,
+                {
+                    "type": "typing_indicator",
+                    "user_id": str(self.user.id),
+                    "is_typing": data.get("is_typing", False),
+                }
+            )
+        except Exception as e:
+            print(f"Error handling typing event: {e}")
 
     @database_sync_to_async
     def get_user_from_token(self, token):
         try:
-            token_obj = Token.objects.get(key=token)
-            return token_obj.user
+            return Token.objects.get(key=token).user
         except Token.DoesNotExist:
             return None
 
     @database_sync_to_async
     def get_or_create_chat(self):
-        user1_id, user2_id = sorted([self.user.id, self.other_user_id])
-        chat, _ = Chat.objects.get_or_create(user1_id=user1_id, user2_id=user2_id)
-        return chat
+        return Chat.objects.get_or_create(
+            user1_id=min(self.user.id, self.other_user_id),
+            user2_id=max(self.user.id, self.other_user_id)
+        )[0]
 
     @database_sync_to_async
     def save_message(self, chat, message):
         return Message.objects.create(chat=chat, sender=self.user, message=message)
 
     @database_sync_to_async
-    def update_presence(self, connecting):
-        try:
-            if connecting:
-                User.objects.filter(id=self.user.id).update(active_connections=F('active_connections') + 1)
-            else:
-                User.objects.filter(id=self.user.id).update(active_connections=F('active_connections') - 1)
+    def user_connect(self):
+        prev_status = self.user.is_online
+        self.user.active_connections = F('active_connections') + 1
+        self.user.save()
+        self.user.refresh_from_db()
+        if self.user.active_connections == 1:
+            self.user.is_online = True
+            self.user.last_online = None
+            self.user.save()
+        return prev_status != self.user.is_online
 
-            self.user.refresh_from_db()
-
-            was_online = self.user.is_online
-            new_is_online = self.user.active_connections > 0
-
-            update_fields = []
-            if new_is_online != self.user.is_online:
-                self.user.is_online = new_is_online
-                update_fields.append('is_online')
-            if not new_is_online:
-                self.user.last_online = datetime.now()
-                update_fields.append('last_online')
-
-            if update_fields:
-                self.user.save(update_fields=update_fields)
-
-            return new_is_online != was_online
-        except Exception as e:
-            print(f"Presence update error: {str(e)}")
-            return False
+    @database_sync_to_async
+    def user_disconnect(self):
+        prev_status = self.user.is_online
+        self.user.active_connections = F('active_connections') - 1
+        self.user.save()
+        self.user.refresh_from_db()
+        if self.user.active_connections == 0:
+            self.user.is_online = False
+            self.user.last_online = datetime.now()
+            self.user.save()
+        return prev_status != self.user.is_online
 
     async def broadcast_status(self):
         partners = await self.get_chat_partners()
-        current_time = datetime.now().isoformat()
         for partner_id in partners:
             await self.channel_layer.group_send(
                 f"chatlist_{partner_id}",
                 {
-                    "type": "user.status",
+                    "type": "status",  # Changed to 'status'
                     "user_id": str(self.user.id),
-                    "status": "online" if self.user.is_online else "offline",
-                    "last_online": current_time if not self.user.is_online else None
+                    "status": "online" if self.user.is_online else "offline"
                 }
             )
 
@@ -180,118 +160,89 @@ class PrivateChatConsumer(AsyncWebsocketConsumer):
     def get_chat_partners(self):
         return list(User.objects.filter(
             Q(chat_user1__user2=self.user) | Q(chat_user2__user1=self.user)
-        ).distinct().values_list('id', flat=True))
+        ).values_list('id', flat=True))
 
-    async def send_error(self, error_msg):
-        await self.send(text_data=json.dumps({
-            "type": "error",
-            "message": error_msg
-        }))
 
-import json
-from channels.generic.websocket import AsyncWebsocketConsumer
-from channels.db import database_sync_to_async
-from rest_framework.authtoken.models import Token
+    
 
 class ChatListConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
-            # Parse query string and extract token
             query_str = self.scope["query_string"].decode()
-            print("Query string:", query_str)
-            query_params = {
-                key: value for key, value in (
-                    param.split("=", 1) if "=" in param else (param, "")
-                    for param in query_str.split("&")
-                )
-            }
+            query_params = dict(param.split("=", 1) if "=" in param else (param, "") for param in query_str.split("&"))
             token = query_params.get("token")
-            print("Received token:", token)
             if not token:
-                print("No token provided")
                 await self.close()
                 return
 
-            # Use helper method to get user from token
             self.user = await self.get_user_from_token(token)
             if not self.user:
-                print("Invalid token or user not found")
-                await self.close(code=4001)
+                await self.close()
                 return
 
             self.room_group_name = f"chatlist_{self.user.id}"
             await self.channel_layer.group_add(self.room_group_name, self.channel_name)
             await self.accept()
-            print(f"ChatListConsumer: User {self.user.username} connected successfully")
         except Exception as e:
-            print("ChatListConsumer connect exception:", str(e))
-            await self.close(code=4001)
+            print(f"ChatList connection error: {e}")
+            await self.close()
 
     async def disconnect(self, close_code):
         if hasattr(self, 'room_group_name'):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
-    async def user_status(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "status",
-            "user_id": event["user_id"],
-            "status": event["status"],
-            "last_online": event.get("last_online")
-        }))
+    async def status(self, event):  # Changed from user_status
+        await self.send(text_data=json.dumps(event))
 
     async def friend_typing(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "friend_typing",
-            "user_id": event["user_id"],
-            "is_typing": event["is_typing"]
-        }))
+        await self.send(text_data=json.dumps(event))
 
     @database_sync_to_async
     def get_user_from_token(self, token):
         try:
-            token_obj = Token.objects.get(key=token)
-            # Access the user here so that lazy evaluation happens in a sync context.
-            return token_obj.user
+            return Token.objects.get(key=token).user
         except Token.DoesNotExist:
             return None
-
-
-
-
-
-
 
 class OnlineStatusConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         try:
             await self.accept()
-            query_params = {
-                key: value for key, value in (
-                    param.split("=", 1) if "=" in param else (param, "")
-                    for param in self.scope["query_string"].decode().split("&")
-                )
-            }
+            query_params = dict(param.split("=", 1) if "=" in param else (param, "") for param in self.scope["query_string"].decode().split("&"))
             token = query_params.get("token")
             if not token:
                 await self.close()
                 return
 
-            token_obj = await database_sync_to_async(Token.objects.get)(key=token)
-            self.user = token_obj.user
+            self.user = await database_sync_to_async(Token.objects.get)(key=token).user
             self.status_group = f"status_{self.user.id}"
             await self.channel_layer.group_add(self.status_group, self.channel_name)
-
+            await self.user_connect()
         except Exception as e:
-            await self.close(code=4001)
+            print(f"Status connection error: {e}")
+            await self.close()
 
     async def disconnect(self, close_code):
         if hasattr(self, 'status_group'):
             await self.channel_layer.group_discard(self.status_group, self.channel_name)
+        if hasattr(self, 'user'):
+            await self.user_disconnect()
 
     async def user_status(self, event):
-        await self.send(text_data=json.dumps({
-            "type": "status",
-            "user_id": event["user_id"],
-            "status": event["status"],
-            "last_online": event.get("last_online")
-        }))
+        await self.send(text_data=json.dumps(event))
+
+    @database_sync_to_async
+    def user_connect(self):
+        self.user.active_connections += 1
+        if self.user.active_connections == 1:
+            self.user.is_online = True
+            self.user.last_online = None
+        self.user.save()
+
+    @database_sync_to_async
+    def user_disconnect(self):
+        self.user.active_connections = max(0, self.user.active_connections - 1)
+        if self.user.active_connections == 0:
+            self.user.is_online = False
+            self.user.last_online = datetime.now()
+        self.user.save()
